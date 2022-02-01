@@ -7,6 +7,7 @@ import SpotifyLogin from "./screens/SpotifyLogin";
 import MainPage from "./screens/MainPage";
 import LoginWebView from './screens/LoginWebView'
 import PlaylistView from "./screens/PlaylistView";
+import MusicPlayer from "./screens/MusicPlayer";
 
 import {ApiTokenContext} from "./contexts/ApiTokenContext";
 
@@ -24,6 +25,7 @@ export default function App() {
                       <Stack.Screen name={"LoginWebView"} component={LoginWebView}/>
                       <Stack.Screen name={"Playlists"} component={MainPage}/>
                       <Stack.Screen name={"PlaylistView"} component={PlaylistView}/>
+                      <Stack.Screen name={"MusicPlayerView"} component={MusicPlayer}/>
                   </Stack.Navigator>
               </NavigationContainer>
           </PaperProvider>

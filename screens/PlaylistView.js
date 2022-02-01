@@ -1,8 +1,10 @@
-import {SafeAreaView, ScrollView, StyleSheet, View} from "react-native";
+import {ScrollView, StyleSheet, View} from "react-native";
 import axios from "axios";
-import {Divider, Switch, Snackbar} from "react-native-paper";
+import {Switch, Drawer, Button} from "react-native-paper";
 import {useContext, useEffect, useState} from "react";
 import {Text} from 'react-native'
+import {APIkey} from "../config";
+import ytdl from "react-native-ytdl"
 
 import {ApiTokenContext} from "../contexts/ApiTokenContext";
 
@@ -13,7 +15,9 @@ export default function PlaylistView({route, navigation}){
     let [playlistInfo, setPlaylistInfo] = useState(null)
     let [tracks, setTracks] = useState(null)
     let [nextPage, setNextPage] = useState(null)
-    let [snackBarVis, setSnackBarVis] = useState(false)
+    let [sliderValue, setSliderValue] = useState(0)
+    let [currentSong, setCurrentSong] = useState(null)
+    let [sound, setSound] = useState(null)
 
     useEffect(() => {
         axios.get(`https://api.spotify.com/v1/playlists/${playlistID}`, {headers: {'Authorization': "Bearer " + token}}).then((resp) => {
@@ -25,11 +29,17 @@ export default function PlaylistView({route, navigation}){
         })
     }, [])
 
-    const isCloseToBottom = ({layoutMeasurement, contentOffset, contentSize}) => {
-        const paddingToBottom = 5;
-        return layoutMeasurement.height + contentOffset.y >=
-            contentSize.height - paddingToBottom;
-    };
+
+    useEffect(() => {
+        if(nextPage != null){
+            axios.get(nextPage, {headers: {'Authorization': "Bearer " + token}}).then((resp) => {
+                var newTracks = [...tracks, ...resp.data.items]
+                setTracks(newTracks)
+                setNextPage(resp.data.next)
+            })
+        }
+    }, [nextPage])
+     
 
     return(
         <View style={styles.container}>
@@ -42,39 +52,28 @@ export default function PlaylistView({route, navigation}){
                 </Text>
                 <Switch value={false}/>
             </View>
-            <ScrollView style={{flex: 1}} onScroll={
-                ({nativeEvent}) => {
-                    if(isCloseToBottom(nativeEvent)){
-                        if(nextPage != null){
-                            setSnackBarVis(true)
-                            axios.get(nextPage, {headers: {'Authorization': "Bearer " + token}}).then((resp) => {
-                                var newTracks = [...tracks, ...resp.data.items]
-                                setTracks(newTracks)
-                                setNextPage(resp.data.next)
-                            })
-                        }
-                    }
-                }
-            }>
+            <ScrollView style={{flex: 1, width: "100%"}}>
                 {tracks != null && tracks.map((song) => {
                     return(
-                        <Text> {song.track.name} </Text>
+                        <Drawer.Item
+                            style={{ backgroundColor: '#64ffda' }}
+                            icon="play"
+                            label={song.track.name + " - " + song.track.artists[0].name}
+                            onPress={() => {
+                                axios.get(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${song.track.name + " - " + song.track.artists[0].name}&type=video&maxResults=1&key=${APIkey}`).then(async (response) => {
+                                    const youtubeURL = `http://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
+                                    const urls = await ytdl(youtubeURL, { filter: "audioonly" });
+                                    setCurrentSong(song.track.name + " - " + song.track.artists[0].name)
+
+                                    navigation.navigate("MusicPlayerView", {url: urls[0].url})
+                                }).catch((error) => {
+                                    console.log(error)
+                                })
+                            }}
+                        />
                         )
                 })}
             </ScrollView>
-            <Snackbar
-                visible={snackBarVis}
-                onDismiss={() => {
-                    setSnackBarVis(false)
-                }}
-                action={{
-                    label: 'Dismiss',
-                    onPress: () => {setSnackBarVis(false)}
-                }}
-                duration={1000}
-            >
-                Loading more songs...
-            </Snackbar>
         </View>
     )
 }
