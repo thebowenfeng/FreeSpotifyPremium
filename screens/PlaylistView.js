@@ -15,9 +15,10 @@ export default function PlaylistView({route, navigation}){
     let [playlistInfo, setPlaylistInfo] = useState(null)
     let [tracks, setTracks] = useState(null)
     let [nextPage, setNextPage] = useState(null)
-    let [sliderValue, setSliderValue] = useState(0)
-    let [currentSong, setCurrentSong] = useState(null)
-    let [sound, setSound] = useState(null)
+    let [displayLimit, setDisplayLimit] = useState(20)
+    let [songIndex, setSongIndex] = useState(null)
+    let [isShuffle, setIsShuffle] = useState(false)
+
 
     useEffect(() => {
         axios.get(`https://api.spotify.com/v1/playlists/${playlistID}`, {headers: {'Authorization': "Bearer " + token}}).then((resp) => {
@@ -39,7 +40,41 @@ export default function PlaylistView({route, navigation}){
             })
         }
     }, [nextPage])
-     
+
+    useEffect(() => {
+        if(songIndex != null){
+            var song = tracks[songIndex];
+            axios.get(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${song.track.name + " - " + song.track.artists[0].name}&type=video&maxResults=1&key=${APIkey}`).then(async (response) => {
+                const youtubeURL = `http://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
+                const urls = await ytdl(youtubeURL, { filter: "audioonly" });
+
+                navigation.navigate("MusicPlayerView", {url: urls[0].url, setSongState: [songIndex, setSongIndex]})
+            }).catch((error) => {
+                console.log(error)
+            })
+        }
+    }, [songIndex])
+
+    var trackDisplayed = []
+
+    if(tracks != null){
+        for(var i = 0; i < displayLimit; i++){
+            if(i === tracks.length){
+                break;
+            }
+            trackDisplayed.push(tracks[i])
+        }
+    }
+
+    const isCloseToBottom = ({layoutMeasurement, contentOffset, contentSize}) => {
+        const paddingToBottom = 20;
+        return layoutMeasurement.height + contentOffset.y >=
+            contentSize.height - paddingToBottom;
+    };
+
+    function getRandomInt(max) {
+        return Math.floor(Math.random() * max);
+    }
 
     return(
         <View style={styles.container}>
@@ -47,13 +82,40 @@ export default function PlaylistView({route, navigation}){
                 {playlistInfo != null && playlistInfo.name}
             </Text>
             <View style={styles.inputWrap}>
-                <Text style={{fontSize:15, marginRight: 120, marginTop: 10}}>
-                    Download
-                </Text>
-                <Switch value={false}/>
+                <Button
+                    onPress={() => {
+                        setIsShuffle(false)
+                        if(songIndex != null){
+                            setSongIndex(null)
+                        }else{
+                            setSongIndex(0)
+                        }
+                    }}
+                >{songIndex != null ? "Pause" : "Play"}</Button>
+                <Button
+                    onPress={() => {
+                        setIsShuffle(true)
+                        if(songIndex != null){
+                            setSongIndex(null)
+                        }else{
+                            setSongIndex(getRandomInt(tracks.length))
+                        }
+                    }}
+                >{songIndex != null ? "Pause Shuffle Play" : "Shuffle Play"}</Button>
             </View>
-            <ScrollView style={{flex: 1, width: "100%"}}>
-                {tracks != null && tracks.map((song) => {
+            <ScrollView
+                style={{flex: 1, width: "100%"}}
+                onScroll={({nativeEvent}) => {
+                    if (isCloseToBottom(nativeEvent)) {
+                        if(displayLimit + 20 > tracks.length){
+                            setDisplayLimit(tracks.length)
+                        }else{
+                            setDisplayLimit(displayLimit + 20)
+                        }
+                    }
+                }}
+            >
+                {tracks != null && trackDisplayed.map((song) => {
                     return(
                         <Drawer.Item
                             style={{ backgroundColor: '#64ffda' }}
@@ -63,9 +125,8 @@ export default function PlaylistView({route, navigation}){
                                 axios.get(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${song.track.name + " - " + song.track.artists[0].name}&type=video&maxResults=1&key=${APIkey}`).then(async (response) => {
                                     const youtubeURL = `http://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
                                     const urls = await ytdl(youtubeURL, { filter: "audioonly" });
-                                    setCurrentSong(song.track.name + " - " + song.track.artists[0].name)
 
-                                    navigation.navigate("MusicPlayerView", {url: urls[0].url})
+                                    navigation.navigate("MusicPlayerView", {url: urls[0].url, setSongState: [songIndex, setSongIndex], isShuffle: isShuffle, playListMax: tracks.length})
                                 }).catch((error) => {
                                     console.log(error)
                                 })
