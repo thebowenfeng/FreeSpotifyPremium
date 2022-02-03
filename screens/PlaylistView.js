@@ -7,7 +7,8 @@ import {APIkey} from "../config";
 import ytdl from "react-native-ytdl"
 
 import {ApiTokenContext} from "../contexts/ApiTokenContext";
-
+import {WebView} from "react-native-webview";
+import HTMLParser from "fast-html-parser";
 
 export default function PlaylistView({route, navigation}){
     const {playlistID} = route.params
@@ -19,7 +20,16 @@ export default function PlaylistView({route, navigation}){
     let [songIndex, setSongIndex] = useState(null)
     let [isShuffle, setIsShuffle] = useState(false)
     let [isPlaying, setIsPlaying] = useState(false)
+    let [currVidID, setCurrVidID] = useState(null)
+    let [currSong, setCurrSong] = useState(null);
+    let [startSearch, setStartSearch] = useState(false);
 
+    var randVar;
+    if(startSearch){
+        randVar = true
+    }else{
+        randVar = false
+    }
 
     useEffect(() => {
         axios.get(`https://api.spotify.com/v1/playlists/${playlistID}`, {headers: {'Authorization': "Bearer " + token}}).then((resp) => {
@@ -45,21 +55,39 @@ export default function PlaylistView({route, navigation}){
     useEffect(() => {
         if(songIndex != null && isPlaying){
             var song = tracks[songIndex];
-            axios.get(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${song.track.name + " - " + song.track.artists[0].name}&type=video&maxResults=1&key=${APIkey}`).then(async (response) => {
-                const youtubeURL = `http://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
-                const urls = await ytdl(youtubeURL, { filter: "audioonly" });
-
-                navigation.navigate("MusicPlayerView", {
-                    url: urls[0].url,
-                    songName: song.track.name + " - " + song.track.artists[0].name,
-                    setSongState: [songIndex, setSongIndex],
-                    playListMax: tracks.length,
-                    setIsPlaying: setIsPlaying})
-            }).catch((error) => {
-                console.log("bruh")
-            })
+            setCurrSong(song)
+            setStartSearch(true);
+            navigation.removeListener('beforeRemove', checkSearchStatus)
         }
     }, [songIndex])
+
+    useEffect(async () => {
+        if(currVidID != null){
+            const youtubeURL = `http://www.youtube.com${currVidID}`;
+            const urls = await ytdl(youtubeURL, { filter: "audioonly" });
+
+            navigation.navigate("MusicPlayerView", {
+                url: urls[0].url,
+                songName: currSong.track.name + " - " + currSong.track.artists[0].name,
+                setSongState: [songIndex, setSongIndex],
+                isShuffle: isShuffle,
+                playListMax: tracks.length,
+                setIsPlaying: setIsPlaying,
+                setID: setCurrVidID
+            })
+        }
+    }, [currVidID])
+
+    const checkSearchStatus = (e) => {
+        e.preventDefault()
+        if(!startSearch){
+            navigation.dispatch(e.data.action)
+        }
+    }
+
+    useEffect(() => {
+        navigation.addListener('beforeRemove', checkSearchStatus)
+    }, [navigation, startSearch])
 
     var trackDisplayed = []
 
@@ -82,76 +110,110 @@ export default function PlaylistView({route, navigation}){
         return Math.floor(Math.random() * max);
     }
 
-    return(
-        <View style={styles.container}>
-            <Text style={{fontSize: 25, marginBottom: 20}}>
-                {playlistInfo != null && playlistInfo.name}
-            </Text>
-            <View style={styles.inputWrap}>
-                <Button
-                    onPress={() => {
-                        setIsPlaying(true)
-                        setIsShuffle(false)
-                        if(songIndex === null){
-                            setSongIndex(0)
-                        }else{
-                            setSongIndex(songIndex + 1)
-                        }
-                    }}
-                    disabled={isPlaying}
-                >Play</Button>
-                <Button
-                    onPress={() => {
-                        setIsPlaying(true)
-                        setIsShuffle(true)
-                        setSongIndex(getRandomInt(tracks.length))
-                    }}
-                    disabled={isPlaying}
-                >Shuffle Play</Button>
-            </View>
-            <ScrollView
-                style={{flex: 1, width: "100%"}}
-                onScroll={({nativeEvent}) => {
-                    if (isCloseToBottom(nativeEvent)) {
-                        if(displayLimit + 20 > tracks.length){
-                            setDisplayLimit(tracks.length)
-                        }else{
-                            setDisplayLimit(displayLimit + 20)
-                        }
-                    }
-                }}
-            >
-                {tracks != null && trackDisplayed.map((song) => {
-                    return(
-                        <Drawer.Item
-                            style={{ backgroundColor: '#64ffda' }}
-                            icon="play"
-                            label={song.track.name + " - " + song.track.artists[0].name}
-                            onPress={() => {
-                                axios.get(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${song.track.name + " - " + song.track.artists[0].name}&type=video&maxResults=1&key=${APIkey}`).then(async (response) => {
-                                    const youtubeURL = `http://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
-                                    const urls = await ytdl(youtubeURL, { filter: "audioonly" });
+    const runFirst = `
+    setTimeout(() => {window.ReactNativeWebView.postMessage(document.documentElement.outerHTML)}, 1500);
+      true; // note: this is required, or you'll sometimes get silent failures
+    `;
 
-                                    navigation.navigate("MusicPlayerView", {
-                                        url: urls[0].url,
-                                        songName: song.track.name + " - " + song.track.artists[0].name,
-                                        setSongState: [songIndex, setSongIndex],
-                                        isShuffle: isShuffle,
-                                        playListMax: tracks.length,
-                                        setIsPlaying: setIsPlaying})
-                                }).catch((error) => {
-                                    console.log(error.response)
-                                })
+    function renderPage(){
+        if(!startSearch){
+            return (
+                <View style={styles.container}>
+                    <Text style={{fontSize: 25, marginBottom: 20}}>
+                        {playlistInfo != null && playlistInfo.name}
+                    </Text>
+                    <View style={styles.inputWrap}>
+                        <Button
+                            onPress={() => {
+                                setIsPlaying(true)
+                                setIsShuffle(false)
+                                if(songIndex === null){
+                                    setSongIndex(0)
+                                }else{
+                                    setSongIndex(songIndex + 1)
+                                }
                             }}
-                        />
-                        )
-                })}
-            </ScrollView>
+                            disabled={isPlaying}
+                        >Play</Button>
+                        <Button
+                            onPress={() => {
+                                setIsPlaying(true)
+                                setIsShuffle(true)
+                                setSongIndex(getRandomInt(tracks.length))
+                            }}
+                            disabled={isPlaying}
+                        >Shuffle Play</Button>
+                    </View>
+                    <ScrollView
+                        style={{flex: 1, width: "100%"}}
+                        onScroll={({nativeEvent}) => {
+                            if (isCloseToBottom(nativeEvent)) {
+                                if(displayLimit + 20 > tracks.length){
+                                    setDisplayLimit(tracks.length)
+                                }else{
+                                    setDisplayLimit(displayLimit + 20)
+                                }
+                            }
+                        }}
+                    >
+                        {tracks != null && trackDisplayed.map((song) => {
+                            return(
+                                <Drawer.Item
+                                    style={{ backgroundColor: '#64ffda' }}
+                                    icon="play"
+                                    label={song.track.name + " - " + song.track.artists[0].name}
+                                    onPress={async () => {
+                                        setCurrSong(song)
+                                        setStartSearch(true);
+                                        navigation.removeListener('beforeRemove', checkSearchStatus)
+                                        //navigation.navigate("YoutubeSearchView", {url: `https://www.youtube.com/results?search_query=${song.track.name + " - " + song.track.artists[0].name}`, setID: setCurrVidID})
+                                    }}
+                                />
+                            )
+                        })}
+                    </ScrollView>
+                </View>
+            )
+        }else{
+            return (
+                <View style={{
+                    maxHeight: "1%",
+                    height: "1%"
+                }}>
+                    <WebView
+                        source={{
+                            uri: `https://www.youtube.com/results?search_query=${currSong.track.name + " - " + currSong.track.artists[0].name}`,
+                        }}
+                        onMessage={(event) => {
+                            var HTMLParser = require('fast-html-parser');
+                            var root = HTMLParser.parse(event.nativeEvent.data)
+                            var htmlElem = root.querySelector("ytm.item").firstChild.firstChild.rawAttrs
+                            setCurrVidID(htmlElem.toString().slice(htmlElem.toString().indexOf("href=") + 6, -1))
+                            setStartSearch(false)
+                        }}
+                        injectedJavaScript={runFirst}
+                        onHttpError={(e) => {
+                            alert("Unknown HTTP error")
+                            setStartSearch(false)
+                        }}
+                    />
+                </View>
+            )
+        }
+    }
+
+    return(
+        <View style={styles.bigcontainer}>
+            {renderPage()}
         </View>
     )
 }
 
 const styles = StyleSheet.create({
+    bigcontainer: {
+        flex: 1,
+        backgroundColor: '#fff',
+    },
     container: {
         flex: 1,
         backgroundColor: '#fff',

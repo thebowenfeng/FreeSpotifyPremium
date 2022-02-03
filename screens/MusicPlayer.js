@@ -11,6 +11,7 @@ export default function MusicPlayer({route, navigation}){
     useEffect(() => {
         navigation.addListener('beforeRemove', (e) => {
             e.preventDefault()
+            route.params.setID(null);
             if(userGoBack){
                 if(!pause){
                     setSongIndex(null);
@@ -75,6 +76,7 @@ export default function MusicPlayer({route, navigation}){
             injectedJavaScript={runFirst}
             onHttpError={(e) => {
                 alert("Song is temporarily unavailable")
+                userGoBack = false
                 navigation.goBack()
             }}
         />
