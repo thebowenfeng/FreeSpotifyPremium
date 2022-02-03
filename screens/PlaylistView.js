@@ -18,6 +18,7 @@ export default function PlaylistView({route, navigation}){
     let [displayLimit, setDisplayLimit] = useState(20)
     let [songIndex, setSongIndex] = useState(null)
     let [isShuffle, setIsShuffle] = useState(false)
+    let [isPlaying, setIsPlaying] = useState(false)
 
 
     useEffect(() => {
@@ -42,15 +43,20 @@ export default function PlaylistView({route, navigation}){
     }, [nextPage])
 
     useEffect(() => {
-        if(songIndex != null){
+        if(songIndex != null && isPlaying){
             var song = tracks[songIndex];
             axios.get(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${song.track.name + " - " + song.track.artists[0].name}&type=video&maxResults=1&key=${APIkey}`).then(async (response) => {
                 const youtubeURL = `http://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
                 const urls = await ytdl(youtubeURL, { filter: "audioonly" });
 
-                navigation.navigate("MusicPlayerView", {url: urls[0].url, setSongState: [songIndex, setSongIndex]})
+                navigation.navigate("MusicPlayerView", {
+                    url: urls[0].url,
+                    songName: song.track.name + " - " + song.track.artists[0].name,
+                    setSongState: [songIndex, setSongIndex],
+                    playListMax: tracks.length,
+                    setIsPlaying: setIsPlaying})
             }).catch((error) => {
-                console.log(error)
+                console.log("bruh")
             })
         }
     }, [songIndex])
@@ -84,24 +90,24 @@ export default function PlaylistView({route, navigation}){
             <View style={styles.inputWrap}>
                 <Button
                     onPress={() => {
+                        setIsPlaying(true)
                         setIsShuffle(false)
-                        if(songIndex != null){
-                            setSongIndex(null)
-                        }else{
+                        if(songIndex === null){
                             setSongIndex(0)
+                        }else{
+                            setSongIndex(songIndex + 1)
                         }
                     }}
-                >{songIndex != null ? "Pause" : "Play"}</Button>
+                    disabled={isPlaying}
+                >Play</Button>
                 <Button
                     onPress={() => {
+                        setIsPlaying(true)
                         setIsShuffle(true)
-                        if(songIndex != null){
-                            setSongIndex(null)
-                        }else{
-                            setSongIndex(getRandomInt(tracks.length))
-                        }
+                        setSongIndex(getRandomInt(tracks.length))
                     }}
-                >{songIndex != null ? "Pause Shuffle Play" : "Shuffle Play"}</Button>
+                    disabled={isPlaying}
+                >Shuffle Play</Button>
             </View>
             <ScrollView
                 style={{flex: 1, width: "100%"}}
@@ -126,9 +132,15 @@ export default function PlaylistView({route, navigation}){
                                     const youtubeURL = `http://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
                                     const urls = await ytdl(youtubeURL, { filter: "audioonly" });
 
-                                    navigation.navigate("MusicPlayerView", {url: urls[0].url, setSongState: [songIndex, setSongIndex], isShuffle: isShuffle, playListMax: tracks.length})
+                                    navigation.navigate("MusicPlayerView", {
+                                        url: urls[0].url,
+                                        songName: song.track.name + " - " + song.track.artists[0].name,
+                                        setSongState: [songIndex, setSongIndex],
+                                        isShuffle: isShuffle,
+                                        playListMax: tracks.length,
+                                        setIsPlaying: setIsPlaying})
                                 }).catch((error) => {
-                                    console.log(error)
+                                    console.log(error.response)
                                 })
                             }}
                         />
