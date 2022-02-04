@@ -5,6 +5,7 @@ import {useEffect, useState} from "react";
 export default function MusicPlayer({route, navigation}){
     const {url} = route.params
     const [songIndex, setSongIndex] = route.params.setSongState
+    const [songSwitch, setSongSwitch] = route.params.setSwitch
     var userGoBack = true;
     var pause = false;
 
@@ -21,10 +22,14 @@ export default function MusicPlayer({route, navigation}){
                 if(route.params.isShuffle){
                     setSongIndex(getRandomInt(route.params.playListMax))
                 }else{
-                    setSongIndex(songIndex + 1)
+                    if(songIndex >= route.params.playListMax - 1){
+                        setSongIndex(0)
+                    }else{
+                        setSongIndex(songIndex + 1)
+                    }
                 }
-
             }
+            setSongSwitch(songSwitch + 1)
             navigation.dispatch(e.data.action)
         })
     }, [navigation])
@@ -48,11 +53,12 @@ export default function MusicPlayer({route, navigation}){
       
       const newDiv2 = document.createElement("div")
       newDiv2.classList.add('buttonDiv')
-      newDiv2.innerHTML += "<button id='pause'>Pause Playlist</button> <button id='cancel'>Cancel Playlist</button>"
+      newDiv2.innerHTML += "<button id='skip'>Skip Song</button> <button id='pause'>Pause Playthrough</button> <button id='cancel'>Cancel Playthrough</button> "
       document.body.insertBefore(newDiv2, document.getElementsByName('media')[0])
       
       document.getElementById('pause').addEventListener('click', () => {window.ReactNativeWebView.postMessage("pause");})
       document.getElementById('cancel').addEventListener('click', () => {window.ReactNativeWebView.postMessage("cancel");})
+      document.getElementById('skip').addEventListener('click', () => {window.ReactNativeWebView.postMessage("skip");})
       
       true; // note: this is required, or you'll sometimes get silent failures
     `;
@@ -62,7 +68,7 @@ export default function MusicPlayer({route, navigation}){
                 uri: url,
             }}
             onMessage={(event) => {
-                if(event.nativeEvent.data === "natexit"){
+                if(event.nativeEvent.data === "natexit" || event.nativeEvent.data === 'skip'){
                     userGoBack = false
                 }else if(event.nativeEvent.data === 'pause'){
                     userGoBack = true
