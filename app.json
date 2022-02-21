@@ -25,7 +25,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
       },
-      "versionCode": 1
+      "versionCode": 1,
+      "permissions": [
+
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
