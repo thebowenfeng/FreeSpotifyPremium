@@ -1,13 +1,15 @@
 import {ScrollView, StyleSheet, View} from "react-native";
 import axios from "axios";
 import {Switch, Drawer, Button, IconButton} from "react-native-paper";
-import {useContext, useEffect, useState, useRef} from "react";
+import {useContext, useEffect, useState, useRef, useMemo, useCallback} from "react";
 import {Text} from 'react-native'
 import {Audio} from 'expo-av'
 import * as FileSystem from 'expo-file-system'
 import MultiSlider from "@ptomasroos/react-native-multi-slider";
+import MusicControl, {Command} from "react-native-music-control";
 
 import {ApiTokenContext} from "../contexts/ApiTokenContext";
+import BottomSheet, {BottomSheetView} from "@gorhom/bottom-sheet";
 
 export default function PlaylistView({route, navigation}){
     const {playlistID} = route.params
@@ -15,7 +17,6 @@ export default function PlaylistView({route, navigation}){
     let [playlistInfo, setPlaylistInfo] = useState(null)
     let [tracks, setTracks] = useState(null)
     let [nextPage, setNextPage] = useState(null)
-    let [displayLimit, setDisplayLimit] = useState(20)
     let [songIndex, setSongIndex] = useState(null)
     let [isShuffle, setIsShuffle] = useState(false)
     let [isPlaying, setIsPlaying] = useState(false)
@@ -29,14 +30,55 @@ export default function PlaylistView({route, navigation}){
     let [transition, setTransition] = useState(false)
     let [isDownload, setIsDownload] = useState(false)
     let [downloadedSongs, setDownloadedSongs] = useState([])
-    let [shuffleRand, setShuffleRand] = useState(null);
+    let [renderSection, setRenderSection] = useState(0)
 
     const downloadRef = useRef(false)
+    const pauseRef = useRef(true)
+    const isPlayingRef = useRef(false)
+    const isShuffleRef = useRef(false)
+    const songIndexRef = useRef(null);
+    const tracksRef = useRef(null)
+    const songSwitchRef = useRef(0);
+    const shuffleRand = useRef(null);
     const componentMounted = useRef(true);
+    const scrollViewRef = useRef(null)
 
     useEffect(() => {
         Audio.setAudioModeAsync({
             staysActiveInBackground: true
+        })
+
+        MusicControl.enableControl('play', true)
+        MusicControl.enableControl('pause', true)
+        MusicControl.enableControl('stop', false)
+        MusicControl.enableControl('nextTrack', true)
+        MusicControl.enableControl('previousTrack', true)
+
+        // Changing track position on lockscreen
+        MusicControl.enableControl('changePlaybackPosition', true)
+
+        MusicControl.enableControl('seek', true) // Android only
+
+        MusicControl.on(Command.pause, ()=> {
+            if(pauseRef.current === true){
+                songObj.playAsync()
+            }else{
+                songObj.pauseAsync()
+            }
+            pauseRef.current = !pauseRef.current;
+            setPause(pauseRef.current)
+        })
+
+        MusicControl.on(Command.seek, (pos)=> {
+            songObj.setPositionAsync(pos * 1000)
+        });
+
+        MusicControl.on(Command.nextTrack, ()=> {
+            skipSong(true)
+        })
+
+        MusicControl.on(Command.previousTrack, ()=> {
+            skipSong(false)
         })
 
         FileSystem.getInfoAsync(FileSystem.documentDirectory + '/temp').then((result) => {
@@ -61,7 +103,9 @@ export default function PlaylistView({route, navigation}){
         axios.get(`https://api.spotify.com/v1/playlists/${playlistID}`, {headers: {'Authorization': "Bearer " + token}}).then((resp) => {
             if(componentMounted.current){
                 setPlaylistInfo(resp.data)
+
                 setTracks(resp.data.tracks.items)
+                tracksRef.current = resp.data.tracks.items;
                 setNextPage(resp.data.tracks.next)
             }
         }).catch((err) => {
@@ -74,6 +118,8 @@ export default function PlaylistView({route, navigation}){
                 await songObj.unloadAsync()
             }
 
+            MusicControl.stopControl()
+
             componentMounted.current = false;
             downloadRef.current = false;
         }
@@ -85,91 +131,109 @@ export default function PlaylistView({route, navigation}){
                 if(componentMounted.current){
                     var newTracks = [...tracks, ...resp.data.items]
                     setTracks(newTracks)
+                    tracksRef.current = newTracks;
                     setNextPage(resp.data.next)
                 }
             })
         }
     }, [nextPage])
 
-    /*
-    useEffect(() => {
-        navigation.addListener('beforeRemove', (e) => {
-            e.preventDefault()
-            navigation.dispatch(e.data.action)
-        })
-    }, [navigation])
-     */
-
     useEffect(async () => {
-        if(songIndex != null && componentMounted.current){
-            if(isShuffle){
-                setShuffleRand(getRandomInt(tracks.length))
-            }
+        try{
+            var songInfo = null;
 
-            var contents = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory + "temp/")
-            var downloadedContents = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory)
-
-            var song = tracks[songIndex];
-            var songName = `${song.track.name + " - " + song.track.artists[0].name}`
-            songName.replace("/", "")
-
-            var URL = `http://34.129.153.202:3000/get_music?name=${songName}`
-            var localURI = FileSystem.documentDirectory + `temp/${songName}.mp3`
-
-            if(downloadedContents.includes(`${songName}.mp3`)){
-                localURI = FileSystem.documentDirectory + `${songName}.mp3`
-            }
-
-            if(contents.includes(`${songName}.mp3`) || downloadedContents.includes(`${songName}.mp3`)){
-                setIsLoaded(false)
-                await songObj.unloadAsync()
-                console.log("unloaded")
-                await songObj.loadAsync({uri: localURI})
-                console.log("loaded")
-                await songObj.playAsync()
-                console.log("playing")
-
-                setIsLoaded(true)
-
-                await songObj.getStatusAsync().then((result) => {
-                    setCurrSongLength(result.durationMillis)
-                })
-
-                await songObj.setStatusAsync({progressUpdateIntervalMillis: 1000})
-                await songObj.setOnPlaybackStatusUpdate(songCallback)
-                setCurrSong(song)
-                setPause(false)
-                setTransition(false)
-            }
-            else{
-                if(contents.length > 0){
-                    await FileSystem.deleteAsync(FileSystem.documentDirectory + `temp/${contents[0]}`)
+            if(songIndex != null && componentMounted.current){
+                if(isShuffle){
+                    if(tracks.length === 1){
+                        shuffleRand.current = 0
+                    }else{
+                        shuffleRand.current = getRandomInt(tracks.length)
+                    }
                 }
 
-                console.log(`Begin loading new song ${songName}`)
-                FileSystem.downloadAsync(URL, localURI).then(async ({uri}) => {
+                var contents = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory + "temp/")
+                var downloadedContents = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory)
+
+                var song = tracks[songIndex];
+                var songName = `${song.track.name + " - " + song.track.artists[0].name}`
+                songName = songName.replace(/[^A-Za-z0-9- ]/g, "");
+
+                var URL = `http://34.129.153.202:3000/get_music?name=${songName}`
+                var localURI = FileSystem.documentDirectory + `temp/${songName}.mp3`
+
+                if(downloadedContents.includes(`${songName}.mp3`)){
+                    localURI = FileSystem.documentDirectory + `${songName}.mp3`
+                }
+
+                if(contents.includes(`${songName}.mp3`) || downloadedContents.includes(`${songName}.mp3`)){
                     setIsLoaded(false)
-                    console.log("Finished downloading to: " + uri)
                     await songObj.unloadAsync()
                     console.log("unloaded")
-                    await songObj.loadAsync({uri: uri})
+                    await songObj.loadAsync({uri: localURI})
                     console.log("loaded")
                     await songObj.playAsync()
                     console.log("playing")
 
                     setIsLoaded(true)
 
-                    await songObj.getStatusAsync().then((result) => {
-                        setCurrSongLength(result.durationMillis)
+                    songInfo = await songObj.getStatusAsync()
+                    setCurrSongLength(songInfo.durationMillis)
+
+                    MusicControl.setNowPlaying({
+                        title: songName,
+                        duration: songInfo.durationMillis / 1000, // (Seconds)
+                        color: 0xff0000, // Android Only - Notification Color
+                        colorized: false, // Android 8+ Only - Notification Color extracted from the artwork. Set to false to use the color property instead
+                        isLiveStream: false, // iOS Only (Boolean), Show or hide Live Indicator instead of seekbar on lock screen for live streams. Default value is false.
                     })
 
                     await songObj.setStatusAsync({progressUpdateIntervalMillis: 1000})
                     await songObj.setOnPlaybackStatusUpdate(songCallback)
                     setCurrSong(song)
                     setPause(false)
+                    pauseRef.current = false;
                     setTransition(false)
-                })
+                }
+                else{
+                    if(contents.length > 0){
+                        await FileSystem.deleteAsync(FileSystem.documentDirectory + `temp/${contents[0]}`)
+                    }
+
+                    console.log(`Begin loading new song ${songName}`)
+                    FileSystem.downloadAsync(URL, localURI).then(async ({uri}) => {
+                        setIsLoaded(false)
+                        console.log("Finished downloading to: " + uri)
+                        await songObj.unloadAsync()
+                        console.log("unloaded")
+                        await songObj.loadAsync({uri: uri})
+                        console.log("loaded")
+                        await songObj.playAsync()
+                        console.log("playing")
+
+                        setIsLoaded(true)
+
+                        songInfo = await songObj.getStatusAsync()
+                        setCurrSongLength(songInfo.durationMillis)
+
+                        MusicControl.setNowPlaying({
+                            title: songName,
+                            duration: songInfo.durationMillis / 1000, // (Seconds)
+                            color: 0xff0000, // Android Only - Notification Color
+                            colorized: false, // Android 8+ Only - Notification Color extracted from the artwork. Set to false to use the color property instead
+                            isLiveStream: false, // iOS Only (Boolean), Show or hide Live Indicator instead of seekbar on lock screen for live streams. Default value is false.
+                        })
+
+                        await songObj.setStatusAsync({progressUpdateIntervalMillis: 1000})
+                        await songObj.setOnPlaybackStatusUpdate(songCallback)
+                        setCurrSong(song)
+                        setPause(false)
+                        pauseRef.current = false;
+                        setTransition(false)
+                    })
+                }
             }
+        }catch(err){
+            alert(err.message)
         }
     }, [songSwitch])
 
@@ -181,33 +245,40 @@ export default function PlaylistView({route, navigation}){
             console.log("initiated download attempt")
             if(tracks != null){
                 for(var i = 0; i < tracks.length; i++){
-                    var song = tracks[i];
-                    var dirContents = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory)
+                    try{
+                        var song = tracks[i];
+                        var dirContents = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory)
 
-                    if (!downloadRef.current){
-                        console.log("detected break")
-                        break;
-                    }
-
-                    var songName = `${song.track.name + " - " + song.track.artists[0].name}`;
-                    songName.replace("/", "");
-
-                    if (!dirContents.includes(songName + ".mp3") && isDownload){
-                        console.log("Downloading " + songName)
-                        var URL = `http://34.129.153.202:3000/get_music?name=${songName}`
-                        var localURI = FileSystem.documentDirectory + `${songName}.mp3`
-
-                        var {uri} = await FileSystem.downloadAsync(URL, localURI)
-                        if(componentMounted.current){
-                            console.log(`${songName} downloaded to ` + uri);
-                            tempDownloaded.push(songName + ".mp3")
-                            setDownloadedSongs([...downloadedSongs, ...tempDownloaded])
+                        if (!downloadRef.current){
+                            console.log("detected break")
+                            break;
                         }
+
+                        var songName = `${song.track.name + " - " + song.track.artists[0].name}`;
+                        songName = songName.replace(/[^A-Za-z0-9- ]/g, "");
+
+                        if (!dirContents.includes(songName + ".mp3") && isDownload){
+                            console.log("Downloading " + songName)
+                            var URL = `http://34.129.153.202:3000/get_music?name=${songName}`
+                            var localURI = FileSystem.documentDirectory + `${songName}.mp3`
+
+                            console.log(`localURI: ${localURI}`)
+
+                            var {uri} = await FileSystem.downloadAsync(URL, localURI)
+                            if(componentMounted.current){
+                                console.log(`${songName} downloaded to ` + uri);
+                                tempDownloaded.push(songName + ".mp3")
+                                setDownloadedSongs([...downloadedSongs, ...tempDownloaded])
+                            }
+                        }
+                    }catch(err){
+                        alert(err.message)
                     }
                 }
             }
         }
     }, [isDownload])
+
 
     var trackDisplayed = []
 
@@ -217,7 +288,7 @@ export default function PlaylistView({route, navigation}){
     }
 
     if(tracks != null){
-        for(var i = 0; i < displayLimit; i++){
+        for(var i = renderSection * 5; i < renderSection * 5 + 20; i++){
             if(i === tracks.length){
                 break;
             }
@@ -225,10 +296,16 @@ export default function PlaylistView({route, navigation}){
         }
     }
 
+
     const isCloseToBottom = ({layoutMeasurement, contentOffset, contentSize}) => {
-        const paddingToBottom = 20;
+        const paddingToBottom = 0;
         return layoutMeasurement.height + contentOffset.y >=
             contentSize.height - paddingToBottom;
+    };
+
+    const isCloseToTop = ({layoutMeasurement, contentOffset, contentSize}) => {
+        const paddingToTop = 0;
+        return contentOffset.y <= paddingToTop;
     };
 
     function getRandomInt(max) {
@@ -263,6 +340,7 @@ export default function PlaylistView({route, navigation}){
                         }else{
                             songObj.pauseAsync()
                         }
+                        pauseRef.current = !pause;
                         setPause(!pause)
                     }
 
@@ -272,33 +350,41 @@ export default function PlaylistView({route, navigation}){
     }
 
     function skipSong(forward){
-        if(isPlaying || (!isPlaying && !isShuffle)){
-            if(songIndex == null){
+        if(isPlayingRef.current || (!isPlayingRef.current && !isShuffleRef.current)){
+            if(songIndexRef.current == null){
                 setSongIndex(0)
+                songIndexRef.current = 0;
             }
             else if(forward){
-                if(songIndex >= tracks.length - 1){
+                if(songIndexRef.current >= tracksRef.current.length - 1){
                     setSongIndex(0)
+                    songIndexRef.current = 0;
                 }else{
-                    setSongIndex(songIndex + 1)
+                    setSongIndex(songIndexRef.current + 1)
+                    songIndexRef.current = songIndexRef.current + 1;
                 }
             }else{
-                if(songIndex === 0){
-                    setSongIndex(tracks.length - 1)
+                if(songIndexRef.current === 0){
+                    setSongIndex(tracksRef.current.length - 1)
+                    songIndexRef.current = tracksRef.current.length - 1;
                 }else{
-                    setSongIndex(songIndex - 1)
+                    setSongIndex(songIndexRef.current - 1)
+                    songIndexRef.current = songIndexRef.current - 1;
                 }
             }
-            setSongSwitch(songSwitch + 1)
-        }else if(isShuffle){
-            setSongIndex(getRandomInt(tracks.length))
-            setSongSwitch(songSwitch + 1)
+            setSongSwitch(songSwitchRef.current + 1)
+            songSwitchRef.current = songSwitchRef.current + 1;
+        }else if(isShuffleRef.current){
+            setSongIndex(getRandomInt(tracksRef.current.length))
+            songIndexRef.current = getRandomInt(tracksRef.current.length);
+            setSongSwitch(songSwitchRef.current + 1)
+            songSwitchRef.current = songSwitchRef.current + 1;
         }
     }
 
     function checkIsDownloaded(song){
         var songName = `${song.track.name + " - " + song.track.artists[0].name}`;
-        songName.replace("/", "");
+        songName = songName.replace(/[^A-Za-z0-9- ]/g, "");
 
         return downloadedSongs.includes(songName + ".mp3")
     }
@@ -308,26 +394,33 @@ export default function PlaylistView({route, navigation}){
         var nextSongIndex = null;
 
         if(pos >= 93 && !transition){
-            if(isPlaying){
+            if(isPlayingRef.current){
                 if(songIndex === null || songIndex >= tracks.length - 1){
                     nextSongIndex = 0
                 }else{
                     nextSongIndex = songIndex + 1
                 }
-            }else if(isShuffle){
-                nextSongIndex = shuffleRand;
+            }else if(isShuffleRef.current){
+                if(shuffleRand.current == null){
+                    shuffleRand.current = getRandomInt(tracks.length)
+                }
+                nextSongIndex = shuffleRand.current;
             }
 
-            if(isPlaying || isShuffle){
+            if(isPlayingRef.current || isShuffleRef.current){
                 if(checkIsDownloaded(tracks[nextSongIndex])){
                     if(pos >= 99){
                         setSongIndex(nextSongIndex)
+                        songIndexRef.current = nextSongIndex;
                         setSongSwitch(songSwitch + 1)
+                        songSwitchRef.current = songSwitch + 1;
                         setTransition(true)
                     }
                 }else{
                     setSongIndex(nextSongIndex)
+                    songIndexRef.current = nextSongIndex;
                     setSongSwitch(songSwitch + 1)
+                    songSwitchRef.current = songSwitch + 1;
                     setTransition(true)
                 }
             }
@@ -335,8 +428,18 @@ export default function PlaylistView({route, navigation}){
 
         if(pos >= 1){
             setScrollBarPos(pos)
+            MusicControl.updatePlayback({
+                state: MusicControl.STATE_PLAYING,
+                elapsedTime: status.positionMillis / 1000,
+            })
         }
     }
+
+    const snapPoints = useMemo(() => ['10%', '25%'], []);
+
+    const handleSheetChanges = useCallback((index) => {
+        console.log('handleSheetChanges', index);
+    }, []);
 
     function renderPage(){
         if(tracks != null){
@@ -350,15 +453,21 @@ export default function PlaylistView({route, navigation}){
                             onPress={() => {
                                 if(isPlaying){
                                     setIsPlaying(false)
+                                    isPlayingRef.current = false;
                                 }else{
                                     setIsPlaying(true)
+                                    isPlayingRef.current = true;
                                     setIsShuffle(false)
+                                    isShuffleRef.current = false;
                                     if(songIndex === null || songIndex >= tracks.length - 1){
                                         setSongIndex(0)
+                                        songIndexRef.current = 0;
                                     }else{
                                         setSongIndex(songIndex + 1)
+                                        songIndexRef.current = songIndexRef + 1;
                                     }
                                     setSongSwitch(songSwitch + 1)
+                                    songSwitchRef.current = songSwitch + 1
                                 }
                             }}
                             disabled={isShuffle || tracks.length === 0}
@@ -367,11 +476,16 @@ export default function PlaylistView({route, navigation}){
                             onPress={() => {
                                 if (isShuffle){
                                     setIsShuffle(false)
+                                    isShuffleRef.current = false;
                                 }else{
                                     setIsPlaying(false)
+                                    isPlayingRef.current = false;
                                     setIsShuffle(true)
+                                    isShuffleRef.current = true;
                                     setSongIndex(getRandomInt(tracks.length))
+                                    songIndexRef.current = getRandomInt(tracks.length);
                                     setSongSwitch(songSwitch + 1)
+                                    songSwitchRef.current = songSwitch + 1;
                                 }
 
                             }}
@@ -394,15 +508,24 @@ export default function PlaylistView({route, navigation}){
                         }}/>
                     </View>
                     <ScrollView
+                        ref={scrollViewRef}
                         style={{flex: 1, width: "100%"}}
                         onScroll={({nativeEvent}) => {
                             if (isCloseToBottom(nativeEvent)) {
-                                if(displayLimit + 20 > tracks.length){
-                                    setDisplayLimit(tracks.length)
-                                }else{
-                                    setDisplayLimit(displayLimit + 20)
+
+                                if((renderSection + 1) + 20 < tracks.length){
+                                    setRenderSection(renderSection + 1)
+                                    scrollViewRef.current.scrollTo({y: nativeEvent.contentOffset.y - nativeEvent.contentSize.height / 20 * 5, animated: false})
+                                }
+
+
+                            }else if(isCloseToTop(nativeEvent)) {
+                                if(renderSection > 0){
+                                    setRenderSection(renderSection - 1)
+                                    scrollViewRef.current.scrollTo({y: nativeEvent.contentSize.height / 20 * 5, animated: false})
                                 }
                             }
+                            //console.log(`Content offset y: ${nativeEvent.contentOffset.y} Layout measurement height: ${nativeEvent.layoutMeasurement.height} Content size height ${nativeEvent.contentSize.height}`);
                         }}
                     >
                         {tracks != null && trackDisplayed.map((song) => {
@@ -410,7 +533,7 @@ export default function PlaylistView({route, navigation}){
                             var fontColor = ""
 
                             var songName = `${song.track.name + " - " + song.track.artists[0].name}`;
-                            songName.replace("/", "");
+                            songName = songName.replace(/[^A-Za-z0-9- ]/g, "");
 
                             if(!downloadedSongs.includes(songName + ".mp3")){
                                 color = "#ff0000"
@@ -428,51 +551,59 @@ export default function PlaylistView({route, navigation}){
                                     onPress={() => {
                                         console.log(tracks.indexOf(song))
                                         setSongIndex(tracks.indexOf(song))
+                                        songIndexRef.current = tracks.indexOf(song);
                                         setSongSwitch(songSwitch + 1)
+                                        songSwitchRef.current = songSwitch + 1;
                                     }}
                                 />
                             )
                         })}
                     </ScrollView>
-                    <View style={{
-                        flex: 1,
-                        maxHeight: '20%',
-                        alignItems: "center"
-                    }}>
-                        <Text style={{fontSize: 20}}>{renderSongName()}</Text>
-                        <MultiSlider
-                            values={[scrollBarPos]}
-                            min={0}
-                            max={100}
-                            onValuesChangeFinish={(value) => {
-                                if(currSong != null && currSongLength !== 0){
-                                    songObj.setPositionAsync(Math.floor(0.01 * value * currSongLength))
-                                }
-                            }}
-                        />
+                    <BottomSheet
+                        index={1}
+                        snapPoints={snapPoints}
+                        onChange={handleSheetChanges}
+                    >
                         <View style={{
                             flex: 1,
-                            flexWrap: 'wrap',
-                            flexDirection: "row",
-                            maxHeight: '7%'
+                            maxHeight: '20%',
+                            alignItems: "center"
                         }}>
-                            <IconButton
-                                icon={{uri: "https://cdn-icons-png.flaticon.com/512/254/254437.png"}}
-                                size={40}
-                                onPress={() => {
-                                    skipSong(false)
+                            <Text style={{fontSize: 20}}>{renderSongName()}</Text>
+                            <MultiSlider
+                                values={[scrollBarPos]}
+                                min={0}
+                                max={100}
+                                onValuesChangeFinish={(value) => {
+                                    if(currSong != null && currSongLength !== 0){
+                                        songObj.setPositionAsync(Math.floor(0.01 * value * currSongLength))
+                                    }
                                 }}
                             />
-                            {renderPlayPauseButton()}
-                            <IconButton
-                                icon={{uri: "https://cdn-icons-png.flaticon.com/512/254/254428.png"}}
-                                size={40}
-                                onPress={() => {
-                                    skipSong(true)
-                                }}
-                            />
+                            <View style={{
+                                flex: 1,
+                                flexWrap: 'wrap',
+                                flexDirection: "row",
+                                maxHeight: '7%'
+                            }}>
+                                <IconButton
+                                    icon={{uri: "https://cdn-icons-png.flaticon.com/512/254/254437.png"}}
+                                    size={40}
+                                    onPress={() => {
+                                        skipSong(false)
+                                    }}
+                                />
+                                {renderPlayPauseButton()}
+                                <IconButton
+                                    icon={{uri: "https://cdn-icons-png.flaticon.com/512/254/254428.png"}}
+                                    size={40}
+                                    onPress={() => {
+                                        skipSong(true)
+                                    }}
+                                />
+                            </View>
                         </View>
-                    </View>
+                    </BottomSheet>
                 </View>
             )
         }
@@ -489,6 +620,9 @@ export default function PlaylistView({route, navigation}){
         </View>
     )
 }
+
+/*
+ */
 
 const styles = StyleSheet.create({
     bigcontainer: {
